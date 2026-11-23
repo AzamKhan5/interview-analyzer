@@ -65,7 +65,7 @@ AI-Interview-Analyzer/
 ### 1. Clone the Repository
 
 ```bash
-git clone <your-repository-url>
+git clone https://github.com/AzamKhan5/interview-analyzer.git
 cd AI-Interview-Analyzer
 ```
 
