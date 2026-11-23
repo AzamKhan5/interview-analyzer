@@ -22,7 +22,7 @@ st.set_page_config(
 
 load_dotenv()
 
-API_KEY = os.getenv("Google_API_KEY")
+API_KEY = os.getenv("GOOGLE_API_KEY")
 
 if not API_KEY:
     st.error("Gemini API key not found. Please configure it in your .env file.")
