@@ -1,6 +1,5 @@
 
 import os
-import json
 import streamlit as st
 
 from dotenv import load_dotenv
@@ -10,7 +9,7 @@ from pydantic import BaseModel, Field
 
 
 # =====================================================
-# 1. APPLICATION CONFIGURATION
+# 1. CONFIGURATION
 # =====================================================
 
 st.set_page_config(
@@ -20,23 +19,30 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-load_dotenv()
+load_dotenv(override=True)
 
-API_KEY = os.getenv("Google_API_KEY")
+API_KEY = os.getenv("Google_API_KEY", "").strip()
 
 if not API_KEY:
-    st.error("Gemini API key not found.")
+    st.error(
+        "Gemini API key not found. Please add Google_API_KEY "
+        "to your .env file."
+    )
     st.stop()
 
-client = genai.Client(
-    api_key=API_KEY,
-    http_options={
-        "api_version": "v1beta"
-    }
-)
+try:
+    client = genai.Client(
+        api_key=API_KEY,
+        http_options=types.HttpOptions(
+            api_version="v1beta"
+        )
+    )
+except Exception as e:
+    st.error(f"Unable to initialize Gemini client: {e}")
+    st.stop()
 
 MODEL_NAME = "gemini-2.5-flash"
-MAX_FILE_SIZE = 5 * 1024 * 1024  # 5 MB
+MAX_FILE_SIZE = 5 * 1024 * 1024
 
 
 # =====================================================
@@ -48,42 +54,42 @@ class CandidateProfile(BaseModel):
         description="Most likely professional role based on the interview."
     )
     seniority_level: str = Field(
-        description="Estimated professional seniority, if supported by evidence."
+        description="Estimated seniority level based on evidence."
     )
     rationale: str = Field(
-        description="Explanation supporting the inferred role and seniority."
+        description="Reasoning supporting the inferred role and seniority."
     )
     confidence: str = Field(
-        description="High, Medium, or Low confidence in this profile inference."
+        description="High, Medium, or Low confidence in the profile inference."
     )
 
 
 class EvidenceItem(BaseModel):
     observation: str = Field(
-        description="Specific strength or potential concern."
+        description="A specific professional strength or potential concern."
     )
     evidence: str = Field(
-        description="Relevant statement or example from the transcript."
+        description="Supporting evidence from the interview transcript."
     )
 
 
 class InterviewAnalysis(BaseModel):
     topics_covered: list[str] = Field(
-        description="Main themes and subjects discussed during the interview."
+        description="Main subjects discussed during the interview."
     )
 
     candidate_profile: CandidateProfile
 
     strengths: list[EvidenceItem] = Field(
-        description="Candidate strengths supported by interview evidence."
+        description="Professional strengths supported by evidence."
     )
 
     concerns_or_gaps: list[EvidenceItem] = Field(
-        description="Potential skill gaps, unclear answers, or areas requiring validation."
+        description="Potential gaps or areas requiring further validation."
     )
 
     candidate_summary: str = Field(
-        description="A professional summary of the candidate in 3 to 6 sentences."
+        description="Professional candidate summary in 3 to 6 sentences."
     )
 
     follow_up_questions: list[str] = Field(
@@ -92,85 +98,89 @@ class InterviewAnalysis(BaseModel):
 
 
 # =====================================================
-# 3. PROMPT ENGINEERING
+# 3. PROFESSIONAL HR PROMPT
 # =====================================================
 
 def build_prompt(transcript, job_description):
 
-    job_context = job_description.strip() if job_description.strip() else (
-        "No job description provided. Analyze the candidate's professional "
-        "background based only on the interview transcript."
+    job_context = (
+        job_description.strip()
+        if job_description.strip()
+        else "No job description provided. Analyze using only "
+             "the interview transcript."
     )
 
     prompt = f"""
-You are a senior HR analyst and professional interview assessment specialist.
+You are a senior HR analyst and professional interview
+assessment specialist.
 
-Your task is to analyze the interview transcript and generate an objective,
-structured, evidence-based interview report.
+Analyze the interview transcript and produce a structured,
+objective, evidence-based candidate assessment.
 
-IMPORTANT ANALYSIS GUIDELINES:
+IMPORTANT GUIDELINES:
 
 1. OBJECTIVITY
-- Base every observation on information explicitly available in the transcript.
-- Do not invent qualifications, experience, achievements, or skills.
-- Distinguish between demonstrated abilities and unverified claims.
-- If information is missing, clearly state that it was not established.
+- Use only information explicitly available in the transcript.
+- Never invent qualifications, experience, achievements, or skills.
+- Distinguish demonstrated abilities from unverified claims.
+- Clearly identify missing information.
 
 2. FAIRNESS
 - Evaluate only job-related professional information.
-- Do not infer or evaluate age, gender, race, religion, disability,
-  marital status, nationality, or other protected characteristics.
+- Do not infer or evaluate age, gender, race, religion,
+  disability, marital status, nationality, or other protected
+  characteristics.
 - Do not make a final hiring or rejection decision.
-- Avoid subjective personality judgments and unsupported assumptions.
+- Avoid subjective personality judgments.
 
 3. EVIDENCE-BASED ASSESSMENT
-- Support strengths with relevant examples from the interview.
-- Identify unclear responses, missing information, and potential skill gaps.
-- Do not interpret an unanswered question as proof of incompetence.
-- Clearly distinguish observed evidence from areas requiring verification.
+- Support strengths with relevant interview examples.
+- Identify unclear responses and potential skill gaps.
+- An unanswered question is not proof of incompetence.
+- Distinguish facts from areas requiring verification.
+- Never fabricate direct quotations.
 
-4. PROFESSIONAL WRITING
-- Use clear, concise, professional HR language.
-- Avoid unnecessary repetition.
-- Keep all observations relevant to recruitment.
-- Do not use exaggerated or promotional language.
+4. PROFESSIONAL COMMUNICATION
+- Use clear and concise HR language.
+- Avoid repetition and exaggerated statements.
+- Maintain a neutral and professional tone.
 
 ANALYSIS REQUIREMENTS:
 
 A. TOPICS COVERED
-Identify the major technical, professional, and experience-related topics
-discussed during the interview.
+Identify the major technical, professional, and
+experience-related topics discussed.
 
 B. CANDIDATE PROFILE
-Identify the most likely professional role and seniority level.
-Explain your reasoning using transcript evidence.
-If the available evidence is insufficient, communicate uncertainty.
+Identify the most likely professional role and seniority.
+Explain the reasoning using transcript evidence.
+Communicate uncertainty when evidence is insufficient.
 
 C. STRENGTHS
 Identify demonstrated professional strengths.
-For each strength, provide a supporting observation or relevant evidence
-from the transcript.
+For each strength, provide a supporting observation
+and evidence from the transcript.
 
-D. CONCERNS OR GAPS
-Identify potential weaknesses, missing information, unclear responses,
-or competencies that require further validation.
-For each item, provide supporting evidence or explain what is missing.
+D. CONCERNS AND GAPS
+Identify unclear responses, missing information,
+potential skill gaps, and competencies requiring validation.
+Explain the evidence or information gap for each concern.
 Do not present speculation as fact.
 
 E. CANDIDATE SUMMARY
-Write a concise professional summary of 3 to 6 sentences.
+Write a professional summary of 3 to 6 sentences.
 Include:
 - Professional background
 - Demonstrated strengths
 - Areas requiring further assessment
-- Overall interview impression
+- Overall interview observations
 
 F. FOLLOW-UP QUESTIONS
-Suggest specific, relevant questions that HR or the hiring manager can
-ask in the next interview round.
-Focus on validating important skills and resolving identified gaps.
+Suggest relevant questions for the next interview.
+Focus on validating important skills and resolving
+identified information gaps.
 
-JOB DESCRIPTION / ROLE CONTEXT:
+JOB DESCRIPTION / ROLE REQUIREMENTS:
 
 {job_context}
 
@@ -178,15 +188,15 @@ INTERVIEW TRANSCRIPT:
 
 {transcript}
 
-Return the analysis strictly according to the provided structured output schema.
+Return the result strictly according to the supplied
+structured output schema.
 """
-
 
     return prompt
 
 
 # =====================================================
-# 4. GEMINI ANALYSIS FUNCTION
+# 4. GEMINI ANALYSIS
 # =====================================================
 
 def analyze_interview(transcript, job_description):
@@ -210,7 +220,7 @@ def analyze_interview(transcript, job_description):
 
 
 # =====================================================
-# 5. REPORT GENERATION
+# 5. MARKDOWN REPORT GENERATION
 # =====================================================
 
 def generate_markdown_report(result):
@@ -234,15 +244,21 @@ def generate_markdown_report(result):
 
     report.append("\n## 3. Candidate Strengths\n")
 
-    for item in result.strengths:
-        report.append(f"### {item.observation}")
-        report.append(f"Evidence: {item.evidence}")
+    if result.strengths:
+        for item in result.strengths:
+            report.append(f"### {item.observation}")
+            report.append(f"Evidence: {item.evidence}")
+    else:
+        report.append("No specific strengths were established.")
 
     report.append("\n## 4. Concerns and Areas to Validate\n")
 
-    for item in result.concerns_or_gaps:
-        report.append(f"### {item.observation}")
-        report.append(f"Evidence: {item.evidence}")
+    if result.concerns_or_gaps:
+        for item in result.concerns_or_gaps:
+            report.append(f"### {item.observation}")
+            report.append(f"Evidence: {item.evidence}")
+    else:
+        report.append("No specific concerns were established.")
 
     report.append("\n## 5. Candidate Summary\n")
     report.append(result.candidate_summary)
@@ -253,9 +269,9 @@ def generate_markdown_report(result):
         report.append(f"- {question}")
 
     report.append(
-        "\n---\n*AI-generated analysis. Verify all observations "
-        "against the original interview transcript before making "
-        "recruitment decisions.*"
+        "\n---\n*AI-generated decision-support report. "
+        "Verify all observations against the original transcript. "
+        "This report does not make a hiring recommendation.*"
     )
 
     return "\n".join(report)
@@ -269,8 +285,8 @@ st.title("🎯 AI Interview Analyzer")
 
 st.markdown(
     """
-    Analyze interview transcripts using Gemini AI and generate
-    structured, evidence-based candidate reports.
+    Analyze interview transcripts using Google Gemini AI
+    and generate structured, evidence-based candidate reports.
 
     **Designed for HR professionals, recruiters, and hiring managers.**
     """
@@ -289,9 +305,8 @@ with st.sidebar:
 
     st.write(
         """
-        This application uses Google Gemini to analyze interview
-        transcripts and organize candidate information into
-        structured HR reports.
+        AI-powered interview transcript analysis
+        for professional recruitment workflows.
         """
     )
 
@@ -303,8 +318,8 @@ with st.sidebar:
         """
         - Topics Covered
         - Candidate Profile
-        - Strengths
-        - Concerns and Gaps
+        - Candidate Strengths
+        - Concerns and Skill Gaps
         - Candidate Summary
         - Follow-up Questions
         """
@@ -312,7 +327,7 @@ with st.sidebar:
 
     st.divider()
 
-    st.caption("AI Model: Gemini 2.5 Flash")
+    st.caption(f"AI Model: {MODEL_NAME}")
     st.caption("Maximum upload size: 5 MB")
 
 
@@ -325,14 +340,14 @@ st.subheader("📄 Upload Interview Transcript")
 uploaded_file = st.file_uploader(
     "Choose a transcript file",
     type=["txt"],
-    help="Upload a plain text interview transcript (UTF-8)."
+    help="Upload a UTF-8 encoded interview transcript."
 )
 
 job_description = st.text_area(
     "Job Description / Role Requirements (Optional)",
     placeholder=(
-        "Paste the job description or key role requirements here. "
-        "This helps the AI contextualize the candidate's experience."
+        "Paste the job description or key role requirements. "
+        "This helps contextualize the candidate's experience."
     ),
     height=150
 )
@@ -343,7 +358,6 @@ if uploaded_file is not None:
     file_content = uploaded_file.getvalue()
 
     if len(file_content) > MAX_FILE_SIZE:
-
         st.error("File exceeds the maximum allowed size of 5 MB.")
         st.stop()
 
@@ -351,14 +365,13 @@ if uploaded_file is not None:
         transcript = file_content.decode("utf-8-sig").strip()
 
     except UnicodeDecodeError:
-
         st.error(
-            "Unable to read the file. Please upload a UTF-8 encoded text file."
+            "Unable to read the file. Please upload a "
+            "UTF-8 encoded text file."
         )
         st.stop()
 
     if not transcript:
-
         st.warning("The uploaded transcript is empty.")
         st.stop()
 
@@ -368,7 +381,10 @@ if uploaded_file is not None:
 
     col1.metric("Word Count", f"{word_count:,}")
     col2.metric("Characters", f"{len(transcript):,}")
-    col3.metric("File Size", f"{len(file_content) / 1024:.1f} KB")
+    col3.metric(
+        "File Size",
+        f"{len(file_content) / 1024:.1f} KB"
+    )
 
     with st.expander("Preview Interview Transcript"):
 
@@ -380,10 +396,9 @@ if uploaded_file is not None:
         )
 
         if len(transcript) > 5000:
-            st.caption("Preview limited to the first 5,000 characters.")
+            st.caption("Showing the first 5,000 characters.")
 
     st.divider()
-
 
     # =================================================
     # 9. GENERATE ANALYSIS
@@ -398,7 +413,7 @@ if uploaded_file is not None:
         if word_count < 20:
 
             st.warning(
-                "The transcript appears too short for a meaningful analysis."
+                "The transcript is too short for meaningful analysis."
             )
 
         else:
@@ -418,14 +433,41 @@ if uploaded_file is not None:
                         result.model_dump()
                     )
 
-                st.success("Interview analysis generated successfully!")
+                st.success(
+                    "Interview analysis generated successfully!"
+                )
 
             except Exception as e:
 
-                st.error(
-                    f"Unable to generate analysis. Please try again. "
-                    f"Error: {str(e)}"
-                )
+                error_message = str(e)
+                error_lower = error_message.lower()
+
+                if (
+                    "api_key_invalid" in error_lower
+                    or "api key not valid" in error_lower
+                    or "api_key" in error_lower
+                ):
+                    st.error(
+                        "Invalid Gemini API key. Check your .env file "
+                        "and generate a valid key from Google AI Studio."
+                    )
+
+                elif "permission_denied" in error_lower:
+                    st.error(
+                        "Gemini API access denied. Check your API key "
+                        "permissions and API configuration."
+                    )
+
+                elif "resource_exhausted" in error_lower or "429" in error_message:
+                    st.error(
+                        "Gemini API quota or rate limit exceeded. "
+                        "Check your API usage and try again later."
+                    )
+
+                else:
+                    st.error(
+                        f"Unable to generate analysis: {error_message}"
+                    )
 
 
 # =====================================================
@@ -456,18 +498,18 @@ if "interview_analysis" in st.session_state:
     with col2:
         st.metric("Seniority Level", profile.seniority_level)
 
-    st.caption(f"Profile confidence: {profile.confidence}")
+    st.caption(f"Profile Confidence: {profile.confidence}")
 
     st.write(profile.rationale)
 
-    # Topics
+    # Topics Covered
 
     st.subheader("2. Topics Covered")
 
     for topic in result.topics_covered:
         st.markdown(f"- {topic}")
 
-    # Strengths and concerns
+    # Strengths and Concerns
 
     col1, col2 = st.columns(2)
 
@@ -489,7 +531,7 @@ if "interview_analysis" in st.session_state:
 
     with col2:
 
-        st.subheader("4. Concerns and Gaps")
+        st.subheader("4. Concerns and Skill Gaps")
 
         if result.concerns_or_gaps:
 
@@ -503,12 +545,11 @@ if "interview_analysis" in st.session_state:
         else:
             st.info("No specific concerns were established.")
 
-    # Summary
+    # Candidate Summary
 
     st.subheader("5. Candidate Summary")
 
     with st.container(border=True):
-
         st.write(result.candidate_summary)
 
     # Follow-up Questions
@@ -519,10 +560,11 @@ if "interview_analysis" in st.session_state:
         result.follow_up_questions,
         start=1
     ):
-
         st.markdown(f"**{index}.** {question}")
 
-    # Download
+    # =================================================
+    # 11. DOWNLOAD REPORT
+    # =================================================
 
     st.divider()
 
@@ -553,7 +595,7 @@ if "interview_analysis" in st.session_state:
         )
 
     st.caption(
-        "Important: This report is AI-generated decision support, "
-        "not a hiring recommendation. HR professionals should "
-        "independently verify the evidence and make all recruitment decisions."
+        "Important: This is an AI-generated decision-support report. "
+        "HR professionals must independently verify the evidence "
+        "and make all recruitment decisions."
     )
